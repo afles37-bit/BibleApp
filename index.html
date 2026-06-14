@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bible Verse Finder</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <main class="card">
+      <div class="hero">
+        <div>
+          <p class="eyebrow">Verse search made simple</p>
+          <h1>Find that half-remembered Bible verse</h1>
+          <p class="lead">
+            Paste or type the phrase you remember, then tap <strong>Find Verse</strong>. The app searches KJV, Amplified, and NLT to show the best matches.
+          </p>
+        </div>
+      </div>
+
+      <form id="search-form" class="search-form">
+        <label for="search-input">Enter the verse text or a description</label>
+        <div class="search-container">
+          <div class="input-wrap">
+            <input id="search-input" type="search" placeholder="Example: the Lord is my shepherd" aria-label="Search verses" aria-describedby="search-helper" spellcheck="true">
+            <button id="input-clear" type="button" class="input-clear" aria-label="Clear search input" hidden>&times;</button>
+          </div>
+          <div class="button-column">
+            <button id="search-button" type="submit">Find Verse</button>
+            <button id="clear-button" type="button">Clear</button>
+          </div>
+        </div>
+        <p id="search-helper" class="helper-text">Searches multiple versions and shows the most likely matches. Try using exact phrases or key words from the verse you remember.</p>
+      </form>
+
+      <section id="status" class="status-message" role="status" aria-live="polite"></section>
+      <section id="results" class="results" aria-label="Search results"></section>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
