@@ -1,10 +1,109 @@
-const API_KEY = '3vDlHU3AM0f7_8fBZAIPu';
-const API_BASE = 'https://api.scripture.api.bible/v1';
+// API requests are proxied through the local dev server at /api
+const API_BASE = '/api';
 const TARGET_VERSIONS = {
   'a81b73293d3080c9-01': 'AMP',
   'de4e12af7f28f599-02': 'engKJV',
   'd6e14a625393b4da-01': 'NLT'
 };
+
+// Error logging and statistics
+const errorLog = {
+  errors: [],
+  maxErrors: 50,
+  add(type, message, details = {}) {
+    this.errors.push({
+      timestamp: new Date().toISOString(),
+      type,
+      message,
+      details
+    });
+    if (this.errors.length > this.maxErrors) {
+      this.errors.shift(); // Keep only recent errors
+    }
+    console.error(`[${type}] ${message}`, details);
+  },
+  getStats() {
+    const stats = {};
+    this.errors.forEach(error => {
+      stats[error.type] = (stats[error.type] || 0) + 1;
+    });
+    return stats;
+  },
+  clear() {
+    this.errors = [];
+  }
+};
+
+// User-friendly error message mapping
+function getUserFriendlyMessage(error, context = '') {
+  if (!error) return 'An unexpected error occurred.';
+  
+  const message = error.message || String(error);
+  
+  // Network errors
+  if (message.includes('Failed to fetch') || message.includes('NetworkError')) {
+    return 'Unable to connect to the server. Please check your internet connection.';
+  }
+  
+  // API errors
+  if (message.includes('403') || message.includes('Forbidden')) {
+    return 'Access denied. The API key may be invalid or expired.';
+  }
+  if (message.includes('404') || message.includes('Not found')) {
+    return 'The requested resource was not found.';
+  }
+  if (message.includes('500') || message.includes('Internal Server')) {
+    return 'The server encountered an error. Please try again in a moment.';
+  }
+  if (message.includes('timeout')) {
+    return 'Request took too long. Please try again.';
+  }
+  
+  // Parse errors
+  if (message.includes('JSON') || message.includes('parse')) {
+    return 'Failed to process the response. Please try again.';
+  }
+  
+  // Default: return original if it's already user-friendly
+  return message;
+}
+
+// Retry with exponential backoff for transient failures
+async function fetchWithRetry(url, options = {}, maxRetries = 2) {
+  const backoff = (attempt) => Math.min(1000 * Math.pow(2, attempt), 5000);
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      
+      // Don't retry on client errors (4xx), only on server errors (5xx) and network issues
+      if (response.ok) {
+        return response;
+      }
+      
+      // Retry on 429 (rate limited) or 5xx errors
+      if (response.status === 429 || response.status >= 500) {
+        if (attempt < maxRetries) {
+          const waitTime = backoff(attempt);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          continue;
+        }
+      }
+      
+      // Don't retry other errors
+      return response;
+    } catch (error) {
+      // Retry on network errors (e.g., connection timeout)
+      if (attempt < maxRetries) {
+        const waitTime = backoff(attempt);
+        console.warn(`Attempt ${attempt + 1} failed, retrying in ${waitTime}ms...`, error.message);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
 
 const searchForm = document.getElementById('search-form');
 const searchInput = document.getElementById('search-input');
@@ -24,11 +123,7 @@ const RESULTS_PER_PAGE = 5;
 async function fetchBibleVersions() {
   try {
     setStatus('Loading available versions...', false);
-    const response = await fetch(`${API_BASE}/bibles`, {
-      headers: {
-        'api-key': API_KEY
-      }
-    });
+    const response = await fetchWithRetry(`${API_BASE}/bibles`);
     if (!response.ok) {
       throw new Error(`Version lookup failed: ${response.status} ${response.statusText}`);
     }
@@ -48,7 +143,9 @@ async function fetchBibleVersions() {
 
     setStatus(`Ready. Searching ${bibleVersions.map((v) => v.abbreviation).join(', ')}.`, false);
   } catch (error) {
-    setStatus(error.message, true);
+    errorLog.add('VERSION_LOOKUP', 'Failed to fetch Bible versions', { error: error.message });
+    const friendlyMessage = getUserFriendlyMessage(error, 'version lookup');
+    setStatus(`Error: ${friendlyMessage}`, true);
   }
 }
 
@@ -57,88 +154,8 @@ function setStatus(message, isError = false) {
   statusNode.style.color = isError ? 'var(--danger)' : 'var(--muted)';
 }
 
-function normalizeText(text) {
-  return text
-    .toLowerCase()
-    .replace(/[\n\r]+/g, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function cleanSearchInput(text) {
-  return text
-    .replace(/\[.*?\]/g, '')
-    .replace(/\{.*?\}/g, '')
-    .replace(/<.*?>/g, '')
-    .replace(/[{}[\]<>]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function stemSearchWord(word) {
-  return word.replace(/(eth|ing|es|s)$/i, '').trim();
-}
-
-function buildFallbackQueries(query) {
-  const words = normalizeText(query).split(' ').filter(Boolean);
-  const queries = new Set();
-  queries.add(query);
-
-  const maxWindow = Math.min(4, words.length);
-  for (let window = maxWindow; window >= 2; window -= 1) {
-    for (let start = 0; start + window <= words.length; start += 1) {
-      queries.add(words.slice(start, start + window).join(' '));
-      const windowWords = words.slice(start, start + window).map((word) => stemSearchWord(word));
-      queries.add(windowWords.join(' '));
-    }
-  }
-
-  words.forEach((word) => {
-    if (word.length >= 4) {
-      queries.add(word);
-      queries.add(stemSearchWord(word));
-    }
-  });
-
-  return Array.from(queries).filter((q) => q && q.split(' ').length > 0);
-}
-
-function scoreMatch(query, verseText) {
-  const normalizedQuery = normalizeText(query);
-  const normalizedVerse = normalizeText(verseText);
-  if (!normalizedQuery || !normalizedVerse) return 0;
-
-  const exactMatch = normalizedVerse.includes(normalizedQuery) ? 30 : 0;
-  const queryWords = normalizedQuery.split(' ');
-  const verseWords = new Set(normalizedVerse.split(' ').filter(Boolean));
-
-  let commonCount = 0;
-  queryWords.forEach((word) => {
-    if (verseWords.has(word)) {
-      commonCount += 1;
-      return;
-    }
-    const stemmed = stemSearchWord(word);
-    if (verseWords.has(stemmed)) {
-      commonCount += 1;
-      return;
-    }
-    for (const verseWord of verseWords) {
-      if (verseWord.startsWith(word) || word.startsWith(verseWord)) {
-        const minLen = Math.min(word.length, verseWord.length);
-        if (minLen >= 5) {
-          commonCount += 1;
-          return;
-        }
-      }
-    }
-  });
-
-  const overlapScore = (commonCount / queryWords.length) * 50;
-  const lengthPenalty = Math.max(0, 20 - Math.abs(normalizedVerse.length - normalizedQuery.length) / 5);
-  return Math.min(100, Math.round(exactMatch + overlapScore + lengthPenalty));
-}
+// Utility functions are now loaded from utils.js
+// (normalizeText, cleanSearchInput, stemSearchWord, buildFallbackQueries, scoreMatch)
 
 function highlightQuery(text, query) {
   const cleanedQuery = query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -148,28 +165,32 @@ function highlightQuery(text, query) {
 }
 
 async function fetchSearchResults(versionId, query, limit = 8) {
-  const url = `${API_BASE}/bibles/${versionId}/search?query=${encodeURIComponent(query)}&limit=${limit}`;
-  const response = await fetch(url, {
-    headers: {
-      'api-key': API_KEY
+  try {
+    const url = `${API_BASE}/bibles/${versionId}/search?query=${encodeURIComponent(query)}&limit=${limit}`;
+    const response = await fetchWithRetry(url);
+
+    if (!response.ok) {
+      throw new Error(`Search failed for version ${versionId}: ${response.status} ${response.statusText}`);
     }
-  });
 
-  if (!response.ok) {
-    throw new Error(`Search failed for version ${versionId}: ${response.status} ${response.statusText}`);
+    const json = await response.json();
+    if (Array.isArray(json.data)) {
+      return json.data;
+    }
+    if (json.data && Array.isArray(json.data.verses)) {
+      return json.data.verses;
+    }
+    if (json.data && Array.isArray(json.data.passages)) {
+      return json.data.passages;
+    }
+    return [];
+  } catch (error) {
+    errorLog.add('SEARCH_FETCH', `Failed to fetch search results for version ${versionId}`, { 
+      query, 
+      error: error.message 
+    });
+    throw error;
   }
-
-  const json = await response.json();
-  if (Array.isArray(json.data)) {
-    return json.data;
-  }
-  if (json.data && Array.isArray(json.data.verses)) {
-    return json.data.verses;
-  }
-  if (json.data && Array.isArray(json.data.passages)) {
-    return json.data.passages;
-  }
-  return [];
 }
 
 async function searchBibleVersion(versionId, query) {
@@ -213,38 +234,70 @@ async function searchBibleVersion(versionId, query) {
 }
 
 async function fetchChapterContent(bibleId, chapterId) {
+  // Defensive: validate inputs
+  if (!bibleId || !chapterId) {
+    errorLog.add('CHAPTER_FETCH', 'Invalid chapter parameters', { bibleId, chapterId });
+    throw new Error('Invalid bibleId or chapterId for chapter fetch');
+  }
+
   const cacheKey = `${bibleId}:${chapterId}`;
   if (chapterCache.has(cacheKey)) {
     return chapterCache.get(cacheKey);
   }
 
-  const url = `${API_BASE}/bibles/${bibleId}/chapters/${chapterId}`;
-  const response = await fetch(url, {
-    headers: {
-      'api-key': API_KEY
+  try {
+    const url = `${API_BASE}/bibles/${encodeURIComponent(bibleId)}/chapters/${encodeURIComponent(chapterId)}`;
+    const response = await fetchWithRetry(url);
+
+    if (!response.ok) {
+      throw new Error(`Chapter fetch failed for ${chapterId}: ${response.status} ${response.statusText}`);
     }
-  });
 
-  if (!response.ok) {
-    throw new Error(`Chapter fetch failed for ${chapterId}: ${response.status} ${response.statusText}`);
+    let html = '';
+    try {
+      const json = await response.json();
+      html = json.data?.content || '';
+    } catch (parseError) {
+      errorLog.add('CHAPTER_PARSE', 'Failed to parse chapter JSON', { 
+        chapterId, 
+        error: parseError.message 
+      });
+      throw new Error('Failed to parse chapter content from API');
+    }
+
+    chapterCache.set(cacheKey, html);
+    return html;
+  } catch (error) {
+    errorLog.add('CHAPTER_FETCH', `Failed to fetch chapter ${chapterId}`, { 
+      bibleId, 
+      chapterId, 
+      error: error.message 
+    });
+    throw error;
   }
-
-  const json = await response.json();
-  const html = json.data?.content || '';
-  chapterCache.set(cacheKey, html);
-  return html;
 }
 
 function parseResult(item, versionName, query) {
+  // Defensive: safely extract fields with fallbacks
+  if (!item || typeof item !== 'object') {
+    console.warn('Invalid item passed to parseResult:', item);
+    return null;
+  }
+
   const text = item.text || item.content || item.passages || '';
   const reference = item.reference || item?.passage?.reference || item?.passage?.display || item?.id || 'Unknown reference';
+  
+  // Defensive: check for required fields for chapter viewing
+  const bibleId = item.bibleId || null;
+  const chapterId = item.chapterId || null;
+  
   return {
     version: versionName,
-    bibleId: item.bibleId,
-    chapterId: item.chapterId,
-    verseId: item.id,
+    bibleId,
+    chapterId,
+    verseId: item.id || '',
     reference,
-    text: text.trim(),
+    text: String(text).trim(),
     score: scoreMatch(query, text)
   };
 }
@@ -255,27 +308,49 @@ function normalizeVerseId(verseId) {
 }
 
 function highlightVerseHtml(html, verseId) {
-  const normalizedSid = normalizeVerseId(verseId);
-  if (!normalizedSid) return html;
-
-  const marker = `data-sid="${normalizedSid}"`;
-  const start = html.indexOf(marker);
-  if (start === -1) return html;
-
-  const spanStart = html.lastIndexOf('<', start);
-  if (spanStart === -1) return html;
-
-  let end = html.indexOf('data-sid="', start + marker.length);
-  if (end === -1) {
-    end = html.length;
-  } else {
-    end = html.lastIndexOf('<', end);
-    if (end === -1) {
-      end = html.length;
-    }
+  // Defensive: validate inputs
+  if (!html || typeof html !== 'string') {
+    return '';
+  }
+  
+  if (!verseId) {
+    return html;
   }
 
-  return html.slice(0, spanStart) + `<span class="original-verse">` + html.slice(spanStart, end) + `</span>` + html.slice(end);
+  const normalizedSid = normalizeVerseId(verseId);
+  if (!normalizedSid) {
+    return html;
+  }
+
+  try {
+    const marker = `data-sid="${normalizedSid}"`;
+    const start = html.indexOf(marker);
+    if (start === -1) {
+      // Verse not found in HTML, return original
+      return html;
+    }
+
+    const spanStart = html.lastIndexOf('<', start);
+    if (spanStart === -1 || spanStart >= start) {
+      // No valid tag found, return original
+      return html;
+    }
+
+    let end = html.indexOf('data-sid="', start + marker.length);
+    if (end === -1) {
+      end = html.length;
+    } else {
+      end = html.lastIndexOf('<', end);
+      if (end === -1 || end <= spanStart) {
+        end = html.length;
+      }
+    }
+
+    return html.slice(0, spanStart) + `<span class="original-verse">` + html.slice(spanStart, end) + `</span>` + html.slice(end);
+  } catch (error) {
+    console.error('Error highlighting verse:', error);
+    return html; // Return original if highlighting fails
+  }
 }
 
 function renderResults(results, query, offset = 0) {
@@ -323,19 +398,39 @@ function renderResults(results, query, offset = 0) {
         return;
       }
 
+      // Defensive: check if we have the required IDs
+      if (!result.bibleId || !result.chapterId) {
+        setStatus('Chapter content is not available for this verse.', true);
+        return;
+      }
+
       chapterButton.disabled = true;
       chapterButton.textContent = 'Loading chapter...';
 
       try {
         let chapterHtml = await fetchChapterContent(result.bibleId, result.chapterId);
-        chapterHtml = highlightVerseHtml(chapterHtml, result.verseId);
-        chapterPanel.innerHTML = chapterHtml || '<p class="helper-text">Chapter content is unavailable.</p>';
+        
+        // Defensive: check if HTML is valid before highlighting
+        if (!chapterHtml || typeof chapterHtml !== 'string') {
+          chapterHtml = '<p class="helper-text">Chapter content is unavailable.</p>';
+        } else {
+          chapterHtml = highlightVerseHtml(chapterHtml, result.verseId);
+        }
+        
+        chapterPanel.innerHTML = chapterHtml;
         chapterPanel.hidden = false;
         chapterButton.textContent = 'Hide whole Chapter';
         chapterButton.setAttribute('aria-expanded', 'true');
       } catch (error) {
-        setStatus(error.message, true);
+        errorLog.add('CHAPTER_LOAD', `Failed to load chapter ${result.chapterId}`, { 
+          bibleId: result.bibleId,
+          verseId: result.verseId,
+          error: error.message 
+        });
+        const friendlyMessage = getUserFriendlyMessage(error, 'chapter loading');
+        setStatus(`Unable to load chapter: ${friendlyMessage}`, true);
         chapterButton.textContent = 'Show whole Chapter';
+        chapterPanel.innerHTML = '<p class="helper-text">Failed to load chapter content. Please try again.</p>';
       } finally {
         chapterButton.disabled = false;
       }
@@ -429,9 +524,14 @@ async function handleSearch(event) {
         if (items.length > 0) {
           foundPartial = true;
         }
-        return items.map((item) => parseResult(item, version.abbreviation, query));
+        return items.map((item) => parseResult(item, version.abbreviation, query)).filter((result) => result !== null);
       } catch (error) {
         apiErrors += 1;
+        errorLog.add('VERSION_SEARCH', `Search failed for version ${version.abbreviation}`, { 
+          query, 
+          version: version.id,
+          error: error.message 
+        });
         return [];
       }
     });
@@ -465,7 +565,9 @@ async function handleSearch(event) {
       setStatus('No matches found. Try a shorter phrase or a different set of words.', true);
     }
   } catch (error) {
-    setStatus(error.message, true);
+    errorLog.add('SEARCH_HANDLER', 'Unexpected error during search', { error: error.message });
+    const friendlyMessage = getUserFriendlyMessage(error, 'search');
+    setStatus(`Error: ${friendlyMessage}`, true);
   } finally {
     searchButton.disabled = false;
   }

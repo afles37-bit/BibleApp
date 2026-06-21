@@ -23,22 +23,24 @@
         <label for="search-input">Enter the verse text or a description</label>
         <div class="search-container">
           <div class="input-wrap">
-            <input id="search-input" type="search" placeholder="Example: the Lord is my shepherd" aria-label="Search verses" aria-describedby="search-helper" spellcheck="true">
-            <button id="input-clear" type="button" class="input-clear" aria-label="Clear search input" hidden>&times;</button>
+            <input id="search-input" type="search" placeholder="Example: the Lord is my shepherd" aria-label="Search verses" aria-describedby="search-helper" spellcheck="true" aria-autocomplete="none">
+            <button id="input-clear" type="button" class="input-clear" aria-label="Clear search input" title="Clear search input" hidden>&times;</button>
           </div>
           <div class="button-column">
-            <button id="search-button" type="submit">Find Verse</button>
-            <button id="clear-button" type="button">Clear</button>
+            <button id="search-button" type="submit" aria-label="Search for verses">Find Verse</button>
+            <button id="clear-button" type="button" aria-label="Clear all fields and results">Clear</button>
           </div>
         </div>
         <p id="search-helper" class="helper-text">Searches multiple versions and shows the most likely matches. Try using exact phrases or key words from the verse you remember.</p>
       </form>
 
-      <section id="status" class="status-message" role="status" aria-live="polite"></section>
-      <section id="results" class="results" aria-label="Search results"></section>
+      <section id="status" class="status-message" role="status" aria-live="polite" aria-atomic="true"></section>
+      <section id="results" class="results" aria-label="Search results" role="region"></section>
     </main>
   </div>
 
+  <!-- Load utilities first, then main app script -->
+  <script src="utils.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

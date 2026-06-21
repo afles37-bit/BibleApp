@@ -4,13 +4,14 @@
   --surface: #ffffff;
   --surface-strong: #fff2e6;
   --text: #14222f;
-  --muted: #5b4d3c;
+  --muted: #3d3428;
   --accent: #ea7d00;
   --accent-soft: #ffe3c1;
   --success: #16a34a;
   --danger: #dc2626;
   --shadow: 0 24px 72px rgba(15, 23, 42, 0.08);
 }
+
 
 * {
   box-sizing: border-box;
@@ -30,7 +31,12 @@ body::before {
   content: "";
   position: fixed;
   inset: 0;
-  background-image: url('bible-bg.jpg');
+  /* Prefer modern formats where available, fall back to JPEG. Use 1x/2x variants if you add them. */
+  background-image: image-set(
+    url('bible-bg.avif') type('image/avif') 1x,
+    url('bible-bg.webp') type('image/webp') 1x,
+    url('bible-bg.jpg') type('image/jpeg') 1x
+  );
   background-size: cover;
   background-position: center center;
   background-repeat: no-repeat;
@@ -162,8 +168,12 @@ button:focus-visible,
 .input-clear:focus-visible,
 .result-card:focus-visible,
 .chapter-toggle-button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 4px rgba(234, 125, 0, 0.25);
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chapter-toggle-button:focus-visible {
+  outline-color: #8b3a0a;
 }
 
 .input-wrap {
@@ -298,10 +308,11 @@ button:disabled {
   padding: 7px 12px;
   border-radius: 999px;
   background: rgba(234, 125, 0, 0.12);
-  color: #c2410c;
+  color: #8b3a0a;
   font-size: 0.85rem;
   font-weight: 700;
 }
+
 
 .chapter-toggle-button {
   margin-left: auto;
@@ -309,11 +320,12 @@ button:disabled {
   border-radius: 999px;
   padding: 10px 16px;
   background: #fff7ed;
-  color: #c2410c;
+  color: #8b3a0a;
   font-weight: 700;
   cursor: pointer;
   transition: background 150ms ease, transform 150ms ease;
 }
+
 
 .chapter-toggle-button:hover {
   background: #fed7aa;
@@ -349,9 +361,10 @@ button:disabled {
 
 .chapter-panel span.v {
   font-weight: 700;
-  color: #c2410c;
+  color: #8b3a0a;
   margin-right: 0.4rem;
 }
+
 
 .chapter-panel span.nd,
 .chapter-panel span.add {
@@ -381,7 +394,7 @@ button:disabled {
   padding: 8px 14px;
   border-radius: 999px;
   background: rgba(234, 125, 0, 0.18);
-  color: #b45309;
+  color: #8b3a0a;
   font-size: 0.85rem;
   font-weight: 700;
   position: absolute;
@@ -438,12 +451,13 @@ button:disabled {
   padding: 8px 16px;
   border-radius: 999px;
   background: rgba(234, 88, 12, 0.1);
-  color: #c2410c;
+  color: #8b3a0a;
   font-weight: 600;
   font-size: 0.9rem;
   min-width: 120px;
   text-align: center;
 }
+
 
 @media (max-width: 640px) {
   body {
@@ -555,6 +569,17 @@ button:disabled {
 
   .button-column {
     gap: 8px;
+  }
+}
+
+/* Use smaller image variants on small screens to save bandwidth. */
+@media (max-width: 640px) {
+  body::before {
+    background-image: image-set(
+      url('bible-bg-small.avif') type('image/avif') 1x,
+      url('bible-bg-small.webp') type('image/webp') 1x,
+      url('bible-bg-small.jpg') type('image/jpeg') 1x
+    );
   }
 }
 
