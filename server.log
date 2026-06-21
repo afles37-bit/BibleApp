@@ -1,0 +1,5 @@
+
+> bible-verse-finder@1.0.0 start
+> node server.js
+
+Dev proxy server running at http://localhost:3000
