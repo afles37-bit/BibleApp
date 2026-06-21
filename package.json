@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start-bg": "bash scripts/start-server.sh",
     "dev": "node server.js",
+    "stop": "bash scripts/stop-server.sh",
     "test": "node test.js"
   },
   "dependencies": {
