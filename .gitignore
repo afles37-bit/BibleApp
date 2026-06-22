@@ -1,1 +1,9 @@
 .DS_Store
+.env
+.env.local
+node_modules/
+*.log
+.server.pid
+*.swp
+.vscode/
+

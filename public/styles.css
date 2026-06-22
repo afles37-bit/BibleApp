@@ -292,6 +292,12 @@ button:disabled {
   margin: 0;
 }
 
+.result-versions {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 .result-meta {
   display: flex;
   flex-wrap: wrap;
@@ -453,6 +459,28 @@ button:disabled {
   font-size: 0.9rem;
   min-width: 120px;
   text-align: center;
+}
+
+.site-footer {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(234, 88, 12, 0.12);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  justify-content: center;
+}
+
+.site-footer a {
+  color: #8b3a0a;
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.site-footer a:hover,
+.site-footer a:focus-visible {
+  text-decoration: underline;
 }
 
 

@@ -11,7 +11,7 @@ const {
   buildFallbackQueries,
   scoreMatch,
   normalizeVerseId
-} = require('./utils.js');
+} = require('./public/utils.js');
 
 console.log('Running unit tests...\n');
 
