@@ -31,15 +31,12 @@ body::before {
   content: "";
   position: fixed;
   inset: 0;
-  /* Prefer modern formats where available, fall back to JPEG. Use 1x/2x variants if you add them. */
-  background-image: image-set(
-    url('bible-bg.avif') type('image/avif') 1x,
-    url('bible-bg.webp') type('image/webp') 1x,
-    url('bible-bg.jpg') type('image/jpeg') 1x
-  );
+  /* Modern formats with PNG fallback */
+  background-image: url('bible-bg.png');
   background-size: cover;
   background-position: center center;
   background-repeat: no-repeat;
+  background-attachment: fixed;
   filter: blur(5px);
   transform: scale(1.03);
   z-index: -2;
@@ -373,15 +370,15 @@ button:disabled {
 }
 
 .original-verse {
-  color: #991b1b;
-  background: rgba(254, 226, 226, 0.35);
+  color: #166534;
+  background: #f7fee7;
   border-radius: 0.45rem;
   display: inline;
   padding: 0.15rem 0.25rem;
 }
 
 .original-verse-number {
-  color: #b91c1c !important;
+  color: #166534 !important;
   font-weight: 800;
 }
 
@@ -572,16 +569,7 @@ button:disabled {
   }
 }
 
-/* Use smaller image variants on small screens to save bandwidth. */
-@media (max-width: 640px) {
-  body::before {
-    background-image: image-set(
-      url('bible-bg-small.avif') type('image/avif') 1x,
-      url('bible-bg-small.webp') type('image/webp') 1x,
-      url('bible-bg-small.jpg') type('image/jpeg') 1x
-    );
-  }
-}
+/* Background remains visible on all screen sizes except very small (under 400px) */
 
 @media (max-width: 400px) {
   body::before {
