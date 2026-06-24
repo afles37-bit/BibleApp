@@ -223,7 +223,11 @@ function renderResults(results, query, offset = 0) {
           chapterHtml = highlightVerseHtml(chapterHtml, result.verseId);
         }
         
-        chapterPanel.innerHTML = chapterHtml;
+        const legend = `<aside class="chapter-legend" aria-label="Chapter colour guide">
+          <span class="legend-swatch legend-swatch--add"></span>Words in <strong>brown italic</strong> were added by translators to clarify meaning — not present in the original manuscripts.
+          <a href="about.html#added-words" target="_blank" rel="noopener">Learn more</a>
+        </aside>`;
+        chapterPanel.innerHTML = legend + chapterHtml;
         chapterPanel.hidden = false;
         chapterButton.textContent = 'Hide whole Chapter';
         chapterButton.setAttribute('aria-expanded', 'true');
