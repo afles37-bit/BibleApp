@@ -2,6 +2,7 @@ const assert = require('assert');
 const { createApp } = require('./server');
 const {
   buildFallbackQueries,
+  cleanSearchInput,
   scoreMatch,
   groupResultsAcrossVersions,
   validateQuery,
@@ -69,6 +70,19 @@ function createMockFetch(itemsByBible = {}) {
 
   // 2) Score floor for no-match
   assert.strictEqual(scoreMatch('xyz', 'The LORD is my shepherd'), 0, 'No-match score should be 0');
+
+  // 2b) Bracketed markup should be removed cleanly from queries
+  assert.strictEqual(
+    cleanSearchInput('I can do all things through Christ [b]who strengthens me'),
+    'I can do all things through Christ who strengthens me',
+    'Bracketed tags should be stripped without gluing words together'
+  );
+
+  const philippiansScore = scoreMatch(
+    'I can do all things through Christ [b]who strengthens me',
+    'I can do all things through Christ which strengtheneth me'
+  );
+  assert(philippiansScore >= 80, `Expected strong score for Philippians 4:13, got ${philippiansScore}`);
 
   // 3) Group duplicate references across versions
   const grouped = groupResultsAcrossVersions([

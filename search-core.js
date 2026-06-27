@@ -16,7 +16,23 @@ function normalizeText(text) {
 
 function cleanSearchInput(text) {
   if (!text) return '';
-  return text.replace(/[\[\]{}<>]/g, '').replace(/\s+/g, ' ').trim();
+  return text
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\{[^}]*\}/g, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[\[\]{}<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+const STOPWORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'but', 'by', 'can', 'did', 'do', 'does', 'doing', 'for', 'from',
+  'had', 'has', 'have', 'i', 'in', 'is', 'it', 'me', 'my', 'of', 'on', 'or', 'our', 'so', 'than', 'that', 'the', 'their',
+  'them', 'there', 'these', 'those', 'to', 'was', 'were', 'what', 'when', 'where', 'which', 'who', 'whom', 'will', 'with',
+  'you', 'your'
+]);
+
+function isMeaningfulWord(word) {
+  return !!word && word.length > 2 && !STOPWORDS.has(word);
 }
 
 function stemSearchWord(word) {
@@ -69,19 +85,58 @@ function validateQuery(query) {
 function scoreMatch(query, verseText) {
   if (!query || !verseText) return 0;
 
-  const cleanQuery = normalizeText(query);
+  const cleanQuery = normalizeText(cleanSearchInput(query));
   const cleanVerse = normalizeText(verseText);
   if (!cleanQuery || !cleanVerse) return 0;
 
-  const queryWords = cleanQuery.split(/\s+/).filter(Boolean);
-  const matchedWords = queryWords.filter((word) => cleanVerse.includes(word));
+  const queryWords = cleanQuery.split(/\s+/).filter(isMeaningfulWord);
+  const verseWords = new Set(cleanVerse.split(/\s+/).filter(Boolean));
+
+  if (!queryWords.length) {
+    return cleanVerse.includes(cleanQuery) ? 100 : 0;
+  }
+
+  const matchedWords = queryWords.filter((word) => {
+    if (verseWords.has(word)) return true;
+
+    const stemmed = stemSearchWord(word);
+    if (verseWords.has(stemmed)) return true;
+
+    for (const verseWord of verseWords) {
+      if ((verseWord.startsWith(word) || word.startsWith(verseWord)) && Math.min(word.length, verseWord.length) >= 5) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+
+  const verseSequence = cleanVerse.split(/\s+/).filter(Boolean);
+  let sequenceIndex = -1;
+  const sequenceMatch = queryWords.every((word) => {
+    const stemmed = stemSearchWord(word);
+    for (let index = sequenceIndex + 1; index < verseSequence.length; index += 1) {
+      const verseWord = verseSequence[index];
+      if (
+        verseWord === word ||
+        verseWord === stemmed ||
+        verseWord.startsWith(word) ||
+        word.startsWith(verseWord)
+      ) {
+        sequenceIndex = index;
+        return true;
+      }
+    }
+    return false;
+  });
 
   // Hard floor: no matching words means no score.
   if (matchedWords.length === 0) return 0;
 
   const wordRatio = matchedWords.length / queryWords.length;
-  const exactPhraseBonus = cleanVerse.includes(cleanQuery) ? 0.2 : 0;
-  const score = Math.round((wordRatio + exactPhraseBonus) * 100);
+  const exactPhraseBonus = cleanVerse.includes(cleanQuery) ? 0.3 : 0;
+  const orderBonus = sequenceMatch ? 0.15 : 0;
+  const score = Math.round((wordRatio + exactPhraseBonus + orderBonus) * 100);
   return Math.min(100, Math.max(1, score));
 }
 
