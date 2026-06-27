@@ -81,6 +81,11 @@ function scoreMatch(query, verseText) {
     }
   });
 
+  // Keep parity with backend scoring: no matching words means no score.
+  if (commonCount === 0) {
+    return 0;
+  }
+
   const overlapScore = (commonCount / queryWords.length) * 50;
   const lengthPenalty = Math.max(0, 20 - Math.abs(normalizedVerse.length - normalizedQuery.length) / 5);
   return Math.min(100, Math.round(exactMatch + overlapScore + lengthPenalty));

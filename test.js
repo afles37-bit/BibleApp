@@ -59,8 +59,7 @@ assert(score2 > 0, 'Should score single word match');
 console.log(`Score for "lord" in verse: ${score2}`);
 
 const score3 = scoreMatch('xyz', 'The LORD is my shepherd');
-// Note: even non-matching queries get partial credit via length penalty
-assert(score3 >= 0, 'Non-matching query should still score >= 0 due to length penalty');
+assert.strictEqual(score3, 0, 'Non-matching query should score 0');
 console.log(`Score for "xyz" in verse: ${score3}`);
 
 const score4 = scoreMatch('', 'The LORD is my shepherd');
