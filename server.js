@@ -24,6 +24,9 @@ const SHORT_QUERY_UPSTREAM_LIMIT = 40;
 const NORMAL_QUERY_UPSTREAM_LIMIT = 16;
 const SHORT_QUERY_PER_VERSION_CAP = 20;
 const NORMAL_QUERY_PER_VERSION_CAP = 10;
+const SEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
+const SEARCH_CACHE_STALE_MS = 2 * 60 * 60 * 1000;
+const SEARCH_CACHE_MAX_ENTRIES = 500;
 
 if (!API_KEY) {
   console.warn('WARNING: SCRIPTURE_API_KEY is not set. API requests will fail.');
@@ -59,6 +62,136 @@ function createApp(options = {}) {
     return true;
   }
 
+  function setSearchCacheEntry(key, payload) {
+    const entry = {
+      payload,
+      expiresAt: Date.now() + SEARCH_CACHE_TTL_MS,
+      staleUntil: Date.now() + SEARCH_CACHE_STALE_MS,
+      refreshing: false
+    };
+
+    if (searchCache.has(key)) {
+      searchCache.delete(key);
+    }
+    searchCache.set(key, entry);
+
+    if (searchCache.size > SEARCH_CACHE_MAX_ENTRIES) {
+      const oldestKey = searchCache.keys().next().value;
+      searchCache.delete(oldestKey);
+    }
+  }
+
+  function getSearchCacheState(key) {
+    const entry = searchCache.get(key);
+    if (!entry) {
+      return { state: 'miss' };
+    }
+
+    const now = Date.now();
+    if (now <= entry.expiresAt) {
+      // refresh insertion order (LRU-like behavior)
+      searchCache.delete(key);
+      searchCache.set(key, entry);
+      return { state: 'fresh', entry };
+    }
+
+    if (now <= entry.staleUntil) {
+      searchCache.delete(key);
+      searchCache.set(key, entry);
+      return { state: 'stale', entry };
+    }
+
+    searchCache.delete(key);
+    return { state: 'miss' };
+  }
+
+  async function runSearchQuery(cleanedQuery) {
+    const results = [];
+    const queryWordCount = cleanedQuery.split(/\s+/).filter(Boolean).length;
+    const isShortQuery = queryWordCount <= 2;
+    const upstreamLimit = isShortQuery ? SHORT_QUERY_UPSTREAM_LIMIT : NORMAL_QUERY_UPSTREAM_LIMIT;
+    const perVersionCap = isShortQuery ? SHORT_QUERY_PER_VERSION_CAP : NORMAL_QUERY_PER_VERSION_CAP;
+
+    const fallbackQueries = buildFallbackQueries(cleanedQuery, FALLBACK_LIMIT);
+
+    async function searchSingleVersion([bibleId, abbreviation]) {
+      const versionResults = [];
+      const seenIds = new Set();
+      let versionApiCalls = 0;
+
+      for (const fallbackQuery of fallbackQueries) {
+        try {
+          const url = `${API_BASE}/bibles/${encodeURIComponent(bibleId)}/search?query=${encodeURIComponent(fallbackQuery)}&limit=${upstreamLimit}`;
+          const response = await fetchImpl(url, { headers: { 'api-key': apiKey } });
+          versionApiCalls += 1;
+
+          if (!response.ok) continue;
+
+          const json = await response.json();
+          const items = Array.isArray(json.data)
+            ? json.data
+            : json.data?.verses || json.data?.passages || [];
+
+          for (const item of items) {
+            const id = item.id || item.verseId || item.reference || `${item.chapterId}:${item.text || item.content || ''}`;
+            if (seenIds.has(id)) continue;
+            seenIds.add(id);
+
+            const text = (item.text || item.content || '').trim();
+            const score = scoreMatch(cleanedQuery, text);
+            if (score < MIN_DISPLAY_SCORE) continue;
+
+            versionResults.push({
+              version: abbreviation,
+              bibleId,
+              reference: item.reference || item?.passage?.display || item?.passage?.reference || 'Unknown reference',
+              text,
+              verseId: item.id || item.verseId || '',
+              chapterId: item.chapterId || '',
+              score
+            });
+          }
+        } catch (err) {
+          console.error(`Error searching ${abbreviation} with fallback '${fallbackQuery}':`, err.message);
+        }
+
+        versionResults.sort((a, b) => b.score - a.score);
+        const strongHits = versionResults.filter((item) => item.score >= 95).length;
+
+        if (strongHits >= 3 || versionResults.length >= perVersionCap) {
+          break;
+        }
+      }
+
+      return {
+        apiCalls: versionApiCalls,
+        results: versionResults.slice(0, perVersionCap)
+      };
+    }
+
+    const versionResults = await Promise.all(Object.entries(APPROVED_BIBLES).map(searchSingleVersion));
+    const apiCallCount = versionResults.reduce((sum, item) => sum + item.apiCalls, 0);
+
+    versionResults.forEach((item) => {
+      results.push(...item.results);
+    });
+
+    const deduped = dedupeResults(results).sort((a, b) => b.score - a.score);
+    const grouped = groupResultsAcrossVersions(deduped);
+
+    return {
+      data: grouped,
+      cached: false,
+      meta: {
+        grouped: true,
+        fallbackLimit: FALLBACK_LIMIT,
+        totalApiCalls: apiCallCount,
+        totalGroups: grouped.length,
+        cacheStatus: 'miss'
+      }
+    };
+  }
+
   app.use(express.json());
   app.use(express.static(path.join(__dirname, 'public')));
 
@@ -77,92 +210,53 @@ function createApp(options = {}) {
     const cleanedQuery = cleanSearchInput(query.trim());
     const cacheKey = `search:${normalizeText(cleanedQuery)}`;
 
-    if (searchCache.has(cacheKey)) {
-      const cached = searchCache.get(cacheKey);
+    const cacheState = getSearchCacheState(cacheKey);
+    if (cacheState.state === 'fresh') {
+      const cachedPayload = cacheState.entry.payload;
       return res.json({
-        data: cached,
+        ...cachedPayload,
         cached: true,
         meta: {
-          fallbackLimit: FALLBACK_LIMIT,
-          grouped: true
+          ...cachedPayload.meta,
+          cacheStatus: 'hit'
+        }
+      });
+    }
+
+    if (cacheState.state === 'stale') {
+      const staleEntry = cacheState.entry;
+      if (!staleEntry.refreshing) {
+        staleEntry.refreshing = true;
+        runSearchQuery(cleanedQuery)
+          .then((freshPayload) => {
+            setSearchCacheEntry(cacheKey, freshPayload);
+          })
+          .catch((err) => {
+            console.error(`Background cache refresh failed for '${cleanedQuery}':`, err.message);
+          })
+          .finally(() => {
+            const entry = searchCache.get(cacheKey);
+            if (entry) {
+              entry.refreshing = false;
+            }
+          });
+      }
+
+      const stalePayload = staleEntry.payload;
+      return res.json({
+        ...stalePayload,
+        cached: true,
+        meta: {
+          ...stalePayload.meta,
+          cacheStatus: 'stale'
         }
       });
     }
 
     try {
-      const results = [];
-      let apiCallCount = 0;
-      const queryWordCount = cleanedQuery.split(/\s+/).filter(Boolean).length;
-      const isShortQuery = queryWordCount <= 2;
-      const upstreamLimit = isShortQuery ? SHORT_QUERY_UPSTREAM_LIMIT : NORMAL_QUERY_UPSTREAM_LIMIT;
-      const perVersionCap = isShortQuery ? SHORT_QUERY_PER_VERSION_CAP : NORMAL_QUERY_PER_VERSION_CAP;
-
-      for (const [bibleId, abbreviation] of Object.entries(APPROVED_BIBLES)) {
-        if (apiCallCount >= MAX_TOTAL_API_CALLS) break;
-
-        const fallbackQueries = buildFallbackQueries(cleanedQuery, FALLBACK_LIMIT);
-        const versionResults = [];
-        const seenIds = new Set();
-
-        for (const fallbackQuery of fallbackQueries) {
-          if (apiCallCount >= MAX_TOTAL_API_CALLS) break;
-
-          try {
-            const url = `${API_BASE}/bibles/${encodeURIComponent(bibleId)}/search?query=${encodeURIComponent(fallbackQuery)}&limit=${upstreamLimit}`;
-            const response = await fetchImpl(url, { headers: { 'api-key': apiKey } });
-            apiCallCount += 1;
-
-            if (!response.ok) continue;
-
-            const json = await response.json();
-            const items = Array.isArray(json.data)
-              ? json.data
-              : json.data?.verses || json.data?.passages || [];
-
-            for (const item of items) {
-              const id = item.id || item.verseId || item.reference || `${item.chapterId}:${item.text || item.content || ''}`;
-              if (seenIds.has(id)) continue;
-              seenIds.add(id);
-
-              const text = (item.text || item.content || '').trim();
-              const score = scoreMatch(cleanedQuery, text);
-              if (score < MIN_DISPLAY_SCORE) continue;
-
-              versionResults.push({
-                version: abbreviation,
-                bibleId,
-                reference: item.reference || item?.passage?.display || item?.passage?.reference || 'Unknown reference',
-                text,
-                verseId: item.id || item.verseId || '',
-                chapterId: item.chapterId || '',
-                score
-              });
-            }
-          } catch (err) {
-            console.error(`Error searching ${abbreviation} with fallback '${fallbackQuery}':`, err.message);
-          }
-
-          if (versionResults.length >= perVersionCap) break;
-        }
-
-        versionResults.sort((a, b) => b.score - a.score);
-        results.push(...versionResults.slice(0, perVersionCap));
-      }
-
-      const deduped = dedupeResults(results).sort((a, b) => b.score - a.score);
-      const grouped = groupResultsAcrossVersions(deduped);
-
-      searchCache.set(cacheKey, grouped);
-      return res.json({
-        data: grouped,
-        cached: false,
-        meta: {
-          grouped: true,
-          fallbackLimit: FALLBACK_LIMIT,
-          totalApiCalls: apiCallCount,
-          totalGroups: grouped.length
-        }
-      });
+      const payload = await runSearchQuery(cleanedQuery);
+      setSearchCacheEntry(cacheKey, payload);
+      return res.json(payload);
     } catch (error) {
       return res.status(500).json({ error: `Search failed: ${error.message}` });
     }
