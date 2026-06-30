@@ -134,9 +134,27 @@ function scoreMatch(query, verseText) {
   if (matchedWords.length === 0) return 0;
 
   const wordRatio = matchedWords.length / queryWords.length;
-  const exactPhraseBonus = cleanVerse.includes(cleanQuery) ? 0.3 : 0;
-  const orderBonus = sequenceMatch ? 0.15 : 0;
-  const score = Math.round((wordRatio + exactPhraseBonus + orderBonus) * 100);
+  const exactPhrase = cleanVerse.includes(cleanQuery);
+
+  let adjacentPairMatches = 0;
+  let pairCount = 0;
+  for (let i = 0; i < queryWords.length - 1; i += 1) {
+    pairCount += 1;
+    const pair = `${queryWords[i]} ${queryWords[i + 1]}`;
+    if (cleanVerse.includes(pair)) {
+      adjacentPairMatches += 1;
+    }
+  }
+  const adjacencyRatio = pairCount > 0 ? adjacentPairMatches / pairCount : 0;
+
+  // Weighting intentionally avoids giving 100 to any verse that simply contains all words.
+  // Exact phrase and close word adjacency are required for top scores.
+  const coverageScore = wordRatio * 70;
+  const exactPhraseScore = exactPhrase ? 20 : 0;
+  const adjacencyScore = adjacencyRatio * 10;
+  const orderScore = sequenceMatch ? 8 : 0;
+
+  const score = Math.round(coverageScore + exactPhraseScore + adjacencyScore + orderScore);
   return Math.min(100, Math.max(1, score));
 }
 

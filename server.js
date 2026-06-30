@@ -20,6 +20,10 @@ const {
 const API_BASE = 'https://api.scripture.api.bible/v1';
 const API_KEY = process.env.SCRIPTURE_API_KEY;
 const PORT = process.env.PORT || 3000;
+const SHORT_QUERY_UPSTREAM_LIMIT = 40;
+const NORMAL_QUERY_UPSTREAM_LIMIT = 16;
+const SHORT_QUERY_PER_VERSION_CAP = 20;
+const NORMAL_QUERY_PER_VERSION_CAP = 10;
 
 if (!API_KEY) {
   console.warn('WARNING: SCRIPTURE_API_KEY is not set. API requests will fail.');
@@ -88,6 +92,10 @@ function createApp(options = {}) {
     try {
       const results = [];
       let apiCallCount = 0;
+      const queryWordCount = cleanedQuery.split(/\s+/).filter(Boolean).length;
+      const isShortQuery = queryWordCount <= 2;
+      const upstreamLimit = isShortQuery ? SHORT_QUERY_UPSTREAM_LIMIT : NORMAL_QUERY_UPSTREAM_LIMIT;
+      const perVersionCap = isShortQuery ? SHORT_QUERY_PER_VERSION_CAP : NORMAL_QUERY_PER_VERSION_CAP;
 
       for (const [bibleId, abbreviation] of Object.entries(APPROVED_BIBLES)) {
         if (apiCallCount >= MAX_TOTAL_API_CALLS) break;
@@ -100,7 +108,7 @@ function createApp(options = {}) {
           if (apiCallCount >= MAX_TOTAL_API_CALLS) break;
 
           try {
-            const url = `${API_BASE}/bibles/${encodeURIComponent(bibleId)}/search?query=${encodeURIComponent(fallbackQuery)}&limit=8`;
+            const url = `${API_BASE}/bibles/${encodeURIComponent(bibleId)}/search?query=${encodeURIComponent(fallbackQuery)}&limit=${upstreamLimit}`;
             const response = await fetchImpl(url, { headers: { 'api-key': apiKey } });
             apiCallCount += 1;
 
@@ -134,10 +142,11 @@ function createApp(options = {}) {
             console.error(`Error searching ${abbreviation} with fallback '${fallbackQuery}':`, err.message);
           }
 
-          if (versionResults.length >= 8) break;
+          if (versionResults.length >= perVersionCap) break;
         }
 
-        results.push(...versionResults);
+        versionResults.sort((a, b) => b.score - a.score);
+        results.push(...versionResults.slice(0, perVersionCap));
       }
 
       const deduped = dedupeResults(results).sort((a, b) => b.score - a.score);

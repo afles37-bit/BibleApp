@@ -82,7 +82,20 @@ function createMockFetch(itemsByBible = {}) {
     'I can do all things through Christ [b]who strengthens me',
     'I can do all things through Christ which strengtheneth me'
   );
-  assert(philippiansScore >= 80, `Expected strong score for Philippians 4:13, got ${philippiansScore}`);
+  assert(philippiansScore >= 60, `Expected strong score for Philippians 4:13, got ${philippiansScore}`);
+
+  const evilDayExactScore = scoreMatch(
+    'evil day',
+    'that ye may be able to withstand in the evil day, and having done all, to stand.'
+  );
+  const evilDayLooseScore = scoreMatch(
+    'evil day',
+    'all day long they plan evil in their hearts.'
+  );
+  assert(
+    evilDayExactScore > evilDayLooseScore,
+    `Expected exact phrase score (${evilDayExactScore}) to outrank loose match (${evilDayLooseScore})`
+  );
 
   // 3) Group duplicate references across versions
   const grouped = groupResultsAcrossVersions([
