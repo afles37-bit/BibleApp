@@ -171,10 +171,18 @@ function renderResults(results, query, offset = 0) {
     const card = document.createElement('article');
     card.className = 'result-card';
 
+    const resultText = document.createElement('p');
+    resultText.className = 'result-text';
+    resultText.innerHTML = highlightQuery(escapeHtml(result.text), query);
+
     const header = document.createElement('div');
     header.className = 'result-header';
     const panelId = `chapter-panel-${Math.random().toString(36).slice(2, 8)}`;
+    const otherPanelId = `other-versions-${Math.random().toString(36).slice(2, 8)}`;
     const otherVersions = Array.isArray(result.otherVersions) ? result.otherVersions : [];
+    const otherVariants = Array.isArray(result.variants)
+      ? result.variants.filter((variant) => variant.version !== result.version)
+      : [];
     const versionSummary = otherVersions.length > 0
       ? `<p class="result-versions">Also available in ${escapeHtml(otherVersions.join(', '))}</p>`
       : '';
@@ -186,6 +194,40 @@ function renderResults(results, query, offset = 0) {
       <h2 class="result-title">${escapeHtml(result.reference)}</h2>
       ${versionSummary}
     `;
+
+    let otherVersionsPanel = null;
+
+    if (otherVariants.length > 0) {
+      const otherVersionsButton = document.createElement('button');
+      otherVersionsButton.type = 'button';
+      otherVersionsButton.className = 'other-versions-toggle';
+      otherVersionsButton.textContent = 'Show other versions';
+      otherVersionsButton.setAttribute('aria-expanded', 'false');
+      otherVersionsButton.setAttribute('aria-controls', otherPanelId);
+      header.appendChild(otherVersionsButton);
+
+      otherVersionsPanel = document.createElement('div');
+      otherVersionsPanel.className = 'other-versions-panel';
+      otherVersionsPanel.id = otherPanelId;
+      otherVersionsPanel.hidden = true;
+
+      otherVariants.forEach((variant) => {
+        const item = document.createElement('article');
+        item.className = 'other-version-item';
+        item.innerHTML = `
+          <p class="other-version-label">${escapeHtml(variant.version || 'Other version')}</p>
+          <p class="other-version-text">${highlightQuery(escapeHtml((variant.text || '').trim()), query)}</p>
+        `;
+        otherVersionsPanel.appendChild(item);
+      });
+
+      otherVersionsButton.addEventListener('click', () => {
+        const isOpen = !otherVersionsPanel.hidden;
+        otherVersionsPanel.hidden = isOpen;
+        otherVersionsButton.textContent = isOpen ? 'Show other versions' : 'Hide other versions';
+        otherVersionsButton.setAttribute('aria-expanded', String(!isOpen));
+      });
+    }
 
     const scoreBadge = document.createElement('span');
     scoreBadge.className = 'score-pill';
@@ -246,10 +288,11 @@ function renderResults(results, query, offset = 0) {
       }
     });
 
-    card.innerHTML = `
-      <p class="result-text">${highlightQuery(escapeHtml(result.text), query)}</p>
-    `;
-    card.insertBefore(header, card.firstChild);
+    card.appendChild(header);
+    card.appendChild(resultText);
+    if (otherVersionsPanel) {
+      card.appendChild(otherVersionsPanel);
+    }
     card.appendChild(scoreBadge);
     card.appendChild(chapterPanel);
     resultsNode.appendChild(card);
