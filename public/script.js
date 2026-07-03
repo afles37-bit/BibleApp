@@ -71,6 +71,7 @@ const inputClear = document.getElementById('input-clear');
 
 let allResults = [];
 let currentResultOffset = 0;
+let currentSearchMeta = {};
 const chapterCache = new Map();
 
 function setStatus(message, isError = false) {
@@ -170,6 +171,10 @@ function renderResults(results, query, offset = 0) {
   pageResults.forEach((result) => {
     const card = document.createElement('article');
     card.className = 'result-card';
+    if (currentSearchMeta.exactMatchType) {
+      card.classList.add('result-card--exact-match');
+      card.classList.add(`result-card--exact-${currentSearchMeta.exactMatchType}`);
+    }
 
     const resultText = document.createElement('p');
     resultText.className = 'result-text';
@@ -186,11 +191,15 @@ function renderResults(results, query, offset = 0) {
     const versionSummary = otherVersions.length > 0
       ? `<p class="result-versions">Also available in ${escapeHtml(otherVersions.join(', '))}</p>`
       : '';
+    const exactMatchBanner = currentSearchMeta.exactMatchType
+      ? `<p class="exact-match-banner">Exact ${escapeHtml(currentSearchMeta.exactMatchType === 'reference' ? 'reference' : 'verse text')} match</p>`
+      : '';
     header.innerHTML = `
       <div class="result-top-row">
         <span class="version-badge">${escapeHtml(result.version)}</span>
         <button class="chapter-toggle-button" type="button" aria-expanded="false" aria-controls="${panelId}">Show whole Chapter</button>
       </div>
+      ${exactMatchBanner}
       <h2 class="result-title">${escapeHtml(result.reference)}</h2>
       ${versionSummary}
     `;
@@ -368,6 +377,7 @@ async function handleSearch(event) {
 
     const json = await response.json();
     const results = json.data || [];
+    currentSearchMeta = json.meta || {};
 
     allResults = results;
     currentResultOffset = 0;
@@ -375,7 +385,12 @@ async function handleSearch(event) {
 
     const elapsed = Math.round(performance.now() - startTime);
     if (results.length) {
-      setStatus(`Found ${results.length} match${results.length === 1 ? '' : 'es'} in ${elapsed}ms.`, false);
+      if (currentSearchMeta.exactMatchType) {
+        const label = currentSearchMeta.exactMatchType === 'reference' ? 'reference' : 'verse text';
+        setStatus(`Found exact ${label} match in ${elapsed}ms.`, false);
+      } else {
+        setStatus(`Found ${results.length} match${results.length === 1 ? '' : 'es'} in ${elapsed}ms.`, false);
+      }
     } else {
       setStatus('No matches found. Try a shorter phrase or different words.', true);
     }
@@ -401,6 +416,7 @@ clearButton.addEventListener('click', () => {
   resultsNode.innerHTML = '';
   allResults = [];
   currentResultOffset = 0;
+  currentSearchMeta = {};
   setStatus('Search cleared.', false);
 });
 

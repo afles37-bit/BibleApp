@@ -1,10 +1,10 @@
 const APPROVED_BIBLES = {
-  'a81b73293d3080c9-01': 'AMP',
   'de4e12af7f28f599-02': 'engKJV',
+  'a81b73293d3080c9-01': 'AMP',
   'd6e14a625393b4da-01': 'NLT'
 };
 
-const MAX_QUERY_LENGTH = 120;
+const MAX_QUERY_LENGTH = 500;
 const FALLBACK_LIMIT = 3;
 const MAX_TOTAL_API_CALLS = 20;
 const MIN_DISPLAY_SCORE = 25;
@@ -23,6 +23,28 @@ function cleanSearchInput(text) {
     .replace(/[\[\]{}<>]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function cleanVerseText(text) {
+  if (!text) return '';
+  const decoded = String(text)
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/[«‹]/g, '<')
+    .replace(/[»›]/g, '>');
+
+  const withoutTags = decoded
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Remove leading verse numbers left behind after stripping markers (e.g. "13 Therefore...").
+  const withoutLeadingNumber = withoutTags.replace(/^\d{1,3}\s+/, '');
+
+  return withoutLeadingNumber;
 }
 const STOPWORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'but', 'by', 'can', 'did', 'do', 'does', 'doing', 'for', 'from',
@@ -82,11 +104,13 @@ function validateQuery(query) {
   return { valid: true };
 }
 
-function scoreMatch(query, verseText) {
+function scoreMatch(query, verseText, reference = '') {
   if (!query || !verseText) return 0;
 
   const cleanQuery = normalizeText(cleanSearchInput(query));
-  const cleanVerse = normalizeText(verseText);
+  const cleanReference = normalizeText(cleanSearchInput(reference || ''));
+  const cleanBody = normalizeText(cleanVerseText(verseText));
+  const cleanVerse = [cleanReference, cleanBody].filter(Boolean).join(' ').trim();
   if (!cleanQuery || !cleanVerse) return 0;
 
   const queryWords = cleanQuery.split(/\s+/).filter(isMeaningfulWord);
@@ -222,6 +246,7 @@ module.exports = {
   MIN_DISPLAY_SCORE,
   normalizeText,
   cleanSearchInput,
+  cleanVerseText,
   stemSearchWord,
   buildFallbackQueries,
   validateQuery,

@@ -9,6 +9,7 @@ const {
   MAX_TOTAL_API_CALLS,
   MIN_DISPLAY_SCORE,
   cleanSearchInput,
+  cleanVerseText,
   normalizeText,
   buildFallbackQueries,
   validateQuery,
@@ -21,7 +22,7 @@ const API_BASE = 'https://api.scripture.api.bible/v1';
 const API_KEY = process.env.SCRIPTURE_API_KEY;
 const PORT = process.env.PORT || 3000;
 const SHORT_QUERY_UPSTREAM_LIMIT = 40;
-const NORMAL_QUERY_UPSTREAM_LIMIT = 16;
+const NORMAL_QUERY_UPSTREAM_LIMIT = 40;
 const SHORT_QUERY_PER_VERSION_CAP = 20;
 const NORMAL_QUERY_PER_VERSION_CAP = 10;
 const SEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -43,6 +44,81 @@ function createApp(options = {}) {
 
   const RATE_LIMIT = 30;
   const RATE_WINDOW_MS = 60 * 1000;
+
+  function sanitizeSearchPayload(payload) {
+    if (!payload || !Array.isArray(payload.data)) return payload;
+
+    return {
+      ...payload,
+      data: payload.data.map((item) => ({
+        ...item,
+        text: cleanVerseText(item.text || ''),
+        variants: Array.isArray(item.variants)
+          ? item.variants.map((variant) => ({
+              ...variant,
+              text: cleanVerseText(variant.text || '')
+            }))
+          : item.variants
+      }))
+    };
+  }
+
+  function isLikelyReferenceQuery(query) {
+    if (!query) return false;
+
+    const cleaned = cleanSearchInput(query).toLowerCase().replace(/\s+/g, ' ').trim();
+    return /^(?:[1-3]\s+)?[a-z][a-z'’.-]*(?:\s+[a-z][a-z'’.-]*)*\s+\d+:\d+(?:-\d+)?$/.test(cleaned);
+  }
+
+  function isLikelyVerseTextQuery(query) {
+    if (!query || isLikelyReferenceQuery(query)) return false;
+
+    const cleaned = normalizeText(cleanSearchInput(query));
+    if (!cleaned) return false;
+
+    const words = cleaned.split(/\s+/).filter(Boolean);
+    return words.length >= 6;
+  }
+
+  function filterExactReferenceResults(results, query) {
+    if (!isLikelyReferenceQuery(query) || !Array.isArray(results) || results.length === 0) {
+      return { results, exactMatchType: '' };
+    }
+
+    const normalizedQuery = normalizeText(cleanSearchInput(query));
+    const exactMatches = results.filter((item) => normalizeText(item.reference || '') === normalizedQuery);
+
+    return exactMatches.length > 0
+      ? { results: exactMatches, exactMatchType: 'reference' }
+      : { results, exactMatchType: '' };
+  }
+
+  function filterExactVerseTextResults(results, query) {
+    if (!isLikelyVerseTextQuery(query) || !Array.isArray(results) || results.length === 0) {
+      return { results, exactMatchType: '' };
+    }
+
+    const normalizedQuery = normalizeText(cleanSearchInput(query));
+    const exactPhraseMatches = results.filter((item) => {
+      const normalizedText = normalizeText(item.text || '');
+      return normalizedText.includes(normalizedQuery) || normalizedQuery.includes(normalizedText);
+    });
+
+    if (exactPhraseMatches.length > 0) {
+      return { results: exactPhraseMatches, exactMatchType: 'verse-text' };
+    }
+
+    if (results.length === 1) {
+      return { results, exactMatchType: 'verse-text' };
+    }
+
+    const [topResult, secondResult] = results;
+    if (topResult && topResult.score >= 90 && (!secondResult || topResult.score - secondResult.score >= 20)) {
+      return { results: [topResult], exactMatchType: 'verse-text' };
+    }
+
+    return { results, exactMatchType: '' };
+  }
 
   function checkRateLimit(ip) {
     const now = Date.now();
@@ -137,14 +213,15 @@ function createApp(options = {}) {
             if (seenIds.has(id)) continue;
             seenIds.add(id);
 
-            const text = (item.text || item.content || '').trim();
-            const score = scoreMatch(cleanedQuery, text);
+            const text = cleanVerseText(item.text || item.content || '');
+            const reference = item.reference || item?.passage?.display || item?.passage?.reference || 'Unknown reference';
+            const score = scoreMatch(cleanedQuery, text, reference);
             if (score < MIN_DISPLAY_SCORE) continue;
 
             versionResults.push({
               version: abbreviation,
               bibleId,
-              reference: item.reference || item?.passage?.display || item?.passage?.reference || 'Unknown reference',
+              reference,
               text,
               verseId: item.id || item.verseId || '',
               chapterId: item.chapterId || '',
@@ -177,7 +254,11 @@ function createApp(options = {}) {
     });
 
     const deduped = dedupeResults(results).sort((a, b) => b.score - a.score);
-    const grouped = groupResultsAcrossVersions(deduped);
+    const groupedResults = groupResultsAcrossVersions(deduped);
+    const verseTextFilter = filterExactVerseTextResults(groupedResults, cleanedQuery);
+    const referenceFilter = filterExactReferenceResults(verseTextFilter.results, cleanedQuery);
+    const grouped = referenceFilter.results;
+    const exactMatchType = referenceFilter.exactMatchType || verseTextFilter.exactMatchType || '';
 
     return {
       data: grouped,
@@ -187,6 +268,7 @@ function createApp(options = {}) {
         fallbackLimit: FALLBACK_LIMIT,
         totalApiCalls: apiCallCount,
         totalGroups: grouped.length,
+        exactMatchType,
         cacheStatus: 'miss'
       }
     };
@@ -212,7 +294,7 @@ function createApp(options = {}) {
 
     const cacheState = getSearchCacheState(cacheKey);
     if (cacheState.state === 'fresh') {
-      const cachedPayload = cacheState.entry.payload;
+      const cachedPayload = sanitizeSearchPayload(cacheState.entry.payload);
       return res.json({
         ...cachedPayload,
         cached: true,
@@ -243,18 +325,19 @@ function createApp(options = {}) {
       }
 
       const stalePayload = staleEntry.payload;
+      const sanitizedStalePayload = sanitizeSearchPayload(stalePayload);
       return res.json({
-        ...stalePayload,
+        ...sanitizedStalePayload,
         cached: true,
         meta: {
-          ...stalePayload.meta,
+          ...sanitizedStalePayload.meta,
           cacheStatus: 'stale'
         }
       });
     }
 
     try {
-      const payload = await runSearchQuery(cleanedQuery);
+      const payload = sanitizeSearchPayload(await runSearchQuery(cleanedQuery));
       setSearchCacheEntry(cacheKey, payload);
       return res.json(payload);
     } catch (error) {

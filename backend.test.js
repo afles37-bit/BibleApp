@@ -3,6 +3,7 @@ const { createApp } = require('./server');
 const {
   buildFallbackQueries,
   cleanSearchInput,
+  cleanVerseText,
   scoreMatch,
   groupResultsAcrossVersions,
   validateQuery,
@@ -84,6 +85,20 @@ function createMockFetch(itemsByBible = {}) {
   );
   assert(philippiansScore >= 60, `Expected strong score for Philippians 4:13, got ${philippiansScore}`);
 
+  const htmlVerse = '<p class="p"><span data-number="13" data-sid="EPH 6:13" class="v">13</span>Therefore, put on the complete armor of God.</p>';
+  assert.strictEqual(
+    cleanVerseText(htmlVerse),
+    'Therefore, put on the complete armor of God.',
+    'Verse HTML should be stripped for scoring and display'
+  );
+  assert.strictEqual(
+    cleanVerseText('resist «span class="it">and</span> stand your ground'),
+    'resist and stand your ground',
+    'Malformed guillemet tags should be normalized and stripped'
+  );
+  const htmlScore = scoreMatch('Therefore put on the complete armor of God', htmlVerse);
+  assert(htmlScore >= 90, `Expected strong score for HTML-wrapped verse, got ${htmlScore}`);
+
   const evilDayExactScore = scoreMatch(
     'evil day',
     'that ye may be able to withstand in the evil day, and having done all, to stand.'
@@ -95,6 +110,21 @@ function createMockFetch(itemsByBible = {}) {
   assert(
     evilDayExactScore > evilDayLooseScore,
     `Expected exact phrase score (${evilDayExactScore}) to outrank loose match (${evilDayLooseScore})`
+  );
+
+  const refPreferredScore = scoreMatch(
+    'ephesians 3:16',
+    'May He grant you out of the riches of His glory, to be strengthened spiritually energized with power through His Spirit in your inner self.',
+    'Ephesians 3:16'
+  );
+  const mentionOnlyScore = scoreMatch(
+    'ephesians 3:16',
+    'Great is Artemis of the Ephesians!',
+    'Acts 19:28'
+  );
+  assert(
+    refPreferredScore > mentionOnlyScore,
+    `Expected exact reference score (${refPreferredScore}) to outrank mention-only match (${mentionOnlyScore})`
   );
 
   // 3) Group duplicate references across versions
@@ -118,9 +148,11 @@ function createMockFetch(itemsByBible = {}) {
   // 5) /api/search validation and /api/search response shape
   const mockFetch = createMockFetch({
     'a81b73293d3080c9-01': [
+      { id: 'EPH.3.16', chapterId: 'EPH.3', reference: 'Ephesians 3:16', text: 'May He grant you out of the riches of His glory' },
       { id: 'JHN.3.16', chapterId: 'JHN.3', reference: 'John 3:16', text: 'For God so loved the world' }
     ],
     'd6e14a625393b4da-01': [
+      { id: 'EPH.3.16', chapterId: 'EPH.3', reference: 'Ephesians 3:16', text: 'I pray that from his glorious, unlimited resources he will empower you with inner strength through his Spirit.' },
       { id: 'JHN.3.16', chapterId: 'JHN.3', reference: 'John 3:16', text: 'For this is how God loved the world' }
     ]
   });
@@ -130,9 +162,28 @@ function createMockFetch(itemsByBible = {}) {
     const badResp = await fetch(`${baseUrl}/api/search?query=`);
     assert.strictEqual(badResp.status, 400, 'Empty query should return 400');
 
-    const longQuery = 'a'.repeat(121);
+    const longQuery = 'a'.repeat(501);
     const longResp = await fetch(`${baseUrl}/api/search?query=${encodeURIComponent(longQuery)}`);
     assert.strictEqual(longResp.status, 400, 'Too-long query should return 400');
+
+    const fullVerseQuery = 'Therefore, put on the complete armor of God, so that you will be able to resist and stand your ground in the evil day.';
+    const fullVerseResp = await fetch(`${baseUrl}/api/search?query=${encodeURIComponent(fullVerseQuery)}`);
+    assert.strictEqual(fullVerseResp.status, 200, 'Full verse text query should be accepted');
+
+    const referenceResp = await fetch(`${baseUrl}/api/search?query=ephesians%203:16`);
+    assert.strictEqual(referenceResp.status, 200, 'Exact verse reference should be accepted');
+    const referenceBody = await referenceResp.json();
+    assert.strictEqual(referenceBody.data.length, 1, 'Exact verse reference should return only one grouped result');
+    assert.strictEqual(referenceBody.data[0].reference, 'Ephesians 3:16', 'Exact verse reference should be the only result');
+    assert.strictEqual(referenceBody.meta.exactMatchType, 'reference', 'Exact reference queries should be labeled in metadata');
+
+    const exactVerseText = 'May He grant you out of the riches of His glory, to be strengthened and spiritually energized with power through His Spirit in your inner self, [indwelling your innermost being and personality],';
+    const exactVerseTextResp = await fetch(`${baseUrl}/api/search?query=${encodeURIComponent(exactVerseText)}`);
+    assert.strictEqual(exactVerseTextResp.status, 200, 'Exact verse text should be accepted');
+    const exactVerseTextBody = await exactVerseTextResp.json();
+    assert.strictEqual(exactVerseTextBody.data.length, 1, 'Exact verse text should return only one grouped result');
+    assert.strictEqual(exactVerseTextBody.data[0].reference, 'Ephesians 3:16', 'Exact verse text should resolve to the matching verse');
+    assert.strictEqual(exactVerseTextBody.meta.exactMatchType, 'verse-text', 'Exact verse text queries should be labeled in metadata');
 
     const okResp = await fetch(`${baseUrl}/api/search?query=god loved world`);
     assert.strictEqual(okResp.status, 200, 'Valid query should return 200');
