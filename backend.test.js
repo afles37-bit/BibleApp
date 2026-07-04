@@ -68,6 +68,11 @@ function createMockFetch(itemsByBible = {}) {
   const fallbacks = buildFallbackQueries('the lord is my shepherd forever and ever');
   assert(fallbacks.length <= FALLBACK_LIMIT, 'Fallback queries should be capped');
   assert(fallbacks.length > 0, 'Should include at least one fallback');
+  const rescueFallbacks = buildFallbackQueries('The Lord will certainly rescue us');
+  assert(
+    rescueFallbacks.some((query) => query.toLowerCase().includes('certainly rescue us')),
+    'Fallback queries should include a shorter meaningful phrase for verse-text searches'
+  );
 
   // 2) Score floor for no-match
   assert.strictEqual(scoreMatch('xyz', 'The LORD is my shepherd'), 0, 'No-match score should be 0');
@@ -95,6 +100,16 @@ function createMockFetch(itemsByBible = {}) {
     cleanVerseText('resist «span class="it">and</span> stand your ground'),
     'resist and stand your ground',
     'Malformed guillemet tags should be normalized and stripped'
+  );
+  assert.strictEqual(
+    cleanVerseText('The L<span class="nd">ord</span> will certainly rescue us'),
+    'The Lord will certainly rescue us',
+    'Inline markup inside a word should not introduce artificial spaces'
+  );
+  assert.strictEqual(
+    cleanVerseText('nor let Hezekiah make you trust in and rely on the L ord , saying, “The L ord will certainly rescue us.”'),
+    'nor let Hezekiah make you trust in and rely on the Lord , saying, “The Lord will certainly rescue us.”',
+    'Split small-caps LORD text should be normalized for display'
   );
   const htmlScore = scoreMatch('Therefore put on the complete armor of God', htmlVerse);
   assert(htmlScore >= 90, `Expected strong score for HTML-wrapped verse, got ${htmlScore}`);

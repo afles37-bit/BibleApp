@@ -37,12 +37,14 @@ function cleanVerseText(text) {
     .replace(/[»›]/g, '>');
 
   const withoutTags = decoded
-    .replace(/<[^>]*>/g, ' ')
+    .replace(/<[^>]*>/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 
+  const normalizedSmallCaps = withoutTags.replace(/\bL\s+ord\b/g, 'Lord');
+
   // Remove leading verse numbers left behind after stripping markers (e.g. "13 Therefore...").
-  const withoutLeadingNumber = withoutTags.replace(/^\d{1,3}\s+/, '');
+  const withoutLeadingNumber = normalizedSmallCaps.replace(/^\d{1,3}(?:\s+|(?=[A-Za-z]))/, '');
 
   return withoutLeadingNumber;
 }
@@ -71,7 +73,15 @@ function buildFallbackQueries(query, limit = FALLBACK_LIMIT) {
 
   const cleaned = cleanSearchInput(query);
   const words = cleaned.split(/\s+/).filter(Boolean);
+  const fallbackWords = words.map((word) => word.toLowerCase()).filter((word) => !!word && !STOPWORDS.has(word));
   const variants = [cleaned];
+
+  if (fallbackWords.length > 0) {
+    variants.push(fallbackWords.join(' '));
+    if (fallbackWords.length > 3) {
+      variants.push(fallbackWords.slice(-3).join(' '));
+    }
+  }
 
   if (words.length > 1) {
     variants.push(words.slice(0, -1).join(' '));
