@@ -156,6 +156,65 @@ function highlightVerseHtml(html, verseId) {
   }
 }
 
+function getChapterLegendHtml() {
+  return `<aside class="chapter-legend" aria-label="Chapter colour guide">
+    <span class="legend-swatch legend-swatch--add"></span>Words in <strong>brown italic</strong> were added by translators to clarify meaning — not present in the original manuscripts.
+    <a href="about.html#added-words" target="_blank" rel="noopener">Learn more</a>
+  </aside>`;
+}
+
+function attachChapterToggle(button, panel, verseData, options = {}) {
+  const {
+    unavailableMessage = 'Chapter content is not available for this verse.',
+    loadErrorContext = 'chapter loading'
+  } = options;
+
+  button.addEventListener('click', async () => {
+    const isOpen = !panel.hidden;
+    if (isOpen) {
+      panel.hidden = true;
+      button.textContent = 'Show whole Chapter';
+      button.setAttribute('aria-expanded', 'false');
+      return;
+    }
+
+    if (!verseData.bibleId || !verseData.chapterId) {
+      setStatus(unavailableMessage, true);
+      return;
+    }
+
+    button.disabled = true;
+    button.textContent = 'Loading chapter...';
+
+    try {
+      let chapterHtml = await fetchChapterContent(verseData.bibleId, verseData.chapterId);
+
+      if (!chapterHtml || typeof chapterHtml !== 'string') {
+        chapterHtml = '<p class="helper-text">Chapter content is unavailable.</p>';
+      } else {
+        chapterHtml = highlightVerseHtml(chapterHtml, verseData.verseId);
+      }
+
+      panel.innerHTML = getChapterLegendHtml() + chapterHtml;
+      panel.hidden = false;
+      button.textContent = 'Hide whole Chapter';
+      button.setAttribute('aria-expanded', 'true');
+    } catch (error) {
+      errorLog.add('CHAPTER_LOAD', `Failed to load chapter ${verseData.chapterId}`, {
+        bibleId: verseData.bibleId,
+        verseId: verseData.verseId,
+        error: error.message
+      });
+      const friendlyMessage = getUserFriendlyMessage(error, loadErrorContext);
+      setStatus(`Unable to load chapter: ${friendlyMessage}`, true);
+      button.textContent = 'Show whole Chapter';
+      panel.innerHTML = '<p class="helper-text">Failed to load chapter content. Please try again.</p>';
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 // Render search results with pagination
 function renderResults(results, query, offset = 0) {
   resultsNode.innerHTML = '';
@@ -220,14 +279,31 @@ function renderResults(results, query, offset = 0) {
       otherVersionsPanel.id = otherPanelId;
       otherVersionsPanel.hidden = true;
 
-      otherVariants.forEach((variant) => {
+      otherVariants.forEach((variant, index) => {
         const item = document.createElement('article');
         item.className = 'other-version-item';
+        const variantPanelId = `${otherPanelId}-chapter-${index}`;
         item.innerHTML = `
-          <p class="other-version-label">${escapeHtml(variant.version || 'Other version')}</p>
+          <div class="other-version-header">
+            <p class="other-version-label">${escapeHtml(variant.version || 'Other version')}</p>
+            <button class="chapter-toggle-button chapter-toggle-button--inline" type="button" aria-expanded="false" aria-controls="${variantPanelId}">Show whole Chapter</button>
+          </div>
           <p class="other-version-text">${highlightQuery(escapeHtml((variant.text || '').trim()), query)}</p>
         `;
+
+        const variantChapterPanel = document.createElement('div');
+        variantChapterPanel.className = 'chapter-panel chapter-panel--nested';
+        variantChapterPanel.id = variantPanelId;
+        variantChapterPanel.hidden = true;
+
+        const variantChapterButton = item.querySelector('.chapter-toggle-button');
+        attachChapterToggle(variantChapterButton, variantChapterPanel, variant, {
+          unavailableMessage: `Chapter content is not available for ${variant.version || 'this version'}.`,
+          loadErrorContext: `${variant.version || 'other version'} chapter loading`
+        });
+
         otherVersionsPanel.appendChild(item);
+        otherVersionsPanel.appendChild(variantChapterPanel);
       });
 
       otherVersionsButton.addEventListener('click', () => {
@@ -248,54 +324,7 @@ function renderResults(results, query, offset = 0) {
     chapterPanel.id = panelId;
     chapterPanel.hidden = true;
 
-    chapterButton.addEventListener('click', async () => {
-      const isOpen = !chapterPanel.hidden;
-      if (isOpen) {
-        chapterPanel.hidden = true;
-        chapterButton.textContent = 'Show whole Chapter';
-        chapterButton.setAttribute('aria-expanded', 'false');
-        return;
-      }
-
-      if (!result.bibleId || !result.chapterId) {
-        setStatus('Chapter content is not available for this verse.', true);
-        return;
-      }
-
-      chapterButton.disabled = true;
-      chapterButton.textContent = 'Loading chapter...';
-
-      try {
-        let chapterHtml = await fetchChapterContent(result.bibleId, result.chapterId);
-        
-        if (!chapterHtml || typeof chapterHtml !== 'string') {
-          chapterHtml = '<p class="helper-text">Chapter content is unavailable.</p>';
-        } else {
-          chapterHtml = highlightVerseHtml(chapterHtml, result.verseId);
-        }
-        
-        const legend = `<aside class="chapter-legend" aria-label="Chapter colour guide">
-          <span class="legend-swatch legend-swatch--add"></span>Words in <strong>brown italic</strong> were added by translators to clarify meaning — not present in the original manuscripts.
-          <a href="about.html#added-words" target="_blank" rel="noopener">Learn more</a>
-        </aside>`;
-        chapterPanel.innerHTML = legend + chapterHtml;
-        chapterPanel.hidden = false;
-        chapterButton.textContent = 'Hide whole Chapter';
-        chapterButton.setAttribute('aria-expanded', 'true');
-      } catch (error) {
-        errorLog.add('CHAPTER_LOAD', `Failed to load chapter ${result.chapterId}`, { 
-          bibleId: result.bibleId,
-          verseId: result.verseId,
-          error: error.message 
-        });
-        const friendlyMessage = getUserFriendlyMessage(error, 'chapter loading');
-        setStatus(`Unable to load chapter: ${friendlyMessage}`, true);
-        chapterButton.textContent = 'Show whole Chapter';
-        chapterPanel.innerHTML = '<p class="helper-text">Failed to load chapter content. Please try again.</p>';
-      } finally {
-        chapterButton.disabled = false;
-      }
-    });
+    attachChapterToggle(chapterButton, chapterPanel, result);
 
     card.appendChild(header);
     card.appendChild(resultText);

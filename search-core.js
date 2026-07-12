@@ -219,7 +219,7 @@ function groupResultsAcrossVersions(results) {
         bibleId: item.bibleId,
         version: item.version,
         versions: [item.version],
-        variants: [{ version: item.version, bibleId: item.bibleId, chapterId: item.chapterId, text: item.text }]
+        variants: [{ version: item.version, bibleId: item.bibleId, chapterId: item.chapterId, verseId: item.verseId, text: item.text }]
       });
       continue;
     }
@@ -227,7 +227,7 @@ function groupResultsAcrossVersions(results) {
     const group = groups.get(groupKey);
     if (!group.versions.includes(item.version)) {
       group.versions.push(item.version);
-      group.variants.push({ version: item.version, bibleId: item.bibleId, chapterId: item.chapterId, text: item.text });
+      group.variants.push({ version: item.version, bibleId: item.bibleId, chapterId: item.chapterId, verseId: item.verseId, text: item.text });
     }
 
     // Keep the best scoring representative as primary.
